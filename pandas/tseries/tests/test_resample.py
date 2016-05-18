@@ -16,15 +16,16 @@ from pandas.core.base import SpecificationError
 from pandas.core.common import ABCSeries, ABCDataFrame
 from pandas.core.groupby import DataError
 from pandas.tseries.frequencies import MONTHS, DAYS
+from pandas.tseries.frequencies import to_offset
 from pandas.tseries.index import date_range
 from pandas.tseries.offsets import Minute, BDay
 from pandas.tseries.period import period_range, PeriodIndex, Period
 from pandas.tseries.resample import (DatetimeIndex, TimeGrouper,
                                      DatetimeIndexResampler)
-from pandas.tseries.frequencies import to_offset
 from pandas.tseries.tdi import timedelta_range
 from pandas.util.testing import (assert_series_equal, assert_almost_equal,
-                                 assert_frame_equal)
+                                 assert_frame_equal, assert_index_equal)
+from pandas._period import IncompatibleFrequency
 
 bday = BDay()
 
@@ -577,6 +578,7 @@ class Base(object):
     base class for resampling testing, calling
     .create_series() generates a series of each index type
     """
+
     def create_index(self, *args, **kwargs):
         """ return the _index_factory created using the args, kwargs """
         factory = self._index_factory()
@@ -2069,17 +2071,36 @@ class TestPeriodIndex(Base, tm.TestCase):
         assert_series_equal(result2, expected)
 
     def test_resample_empty(self):
-
         # GH12771 & GH12868
         index = PeriodIndex(start='2000', periods=0, freq='D', name='idx')
         s = Series(index=index)
 
-        expected_index = PeriodIndex([], name='idx', freq='M')
-        expected = Series(index=expected_index)
+        for freq in ['M', 'D', 'H']:
+            methods = resample_methods.copy()
+            methods.remove('ohlc')
+            for method in methods:
+                expected_index = PeriodIndex([], name='idx', freq=freq)
+                result = getattr(s.resample(freq), method)()
+                expected = Series(index=expected_index)
+                assert_index_equal(result.index, expected_index)
+                assert_series_equal(result, expected, check_dtype=False)
 
-        for method in resample_methods:
-            result = getattr(s.resample('M'), method)()
-            assert_series_equal(result, expected)
+    def test_resample_empty_ohlc(self):
+        # GH13079
+        index = PeriodIndex(start='2000', periods=0, freq='D', name='idx')
+        s = Series(index=index)
+
+        for freq in ['M', 'D', 'H']:
+            expected_index = PeriodIndex([], name='idx', freq=freq)
+            result = getattr(s.resample(freq), 'ohlc')()
+            if freq == 'H':
+                # GH13083, olhc returning series on downsample
+                assert_index_equal(result.index, expected_index)
+            else:
+                expected = DataFrame(
+                    index=expected_index,
+                    columns=['open', 'high', 'low', 'close'])
+                assert_frame_equal(result, expected, check_dtype=False)
 
     def test_resample_count(self):
 
@@ -2103,6 +2124,12 @@ class TestPeriodIndex(Base, tm.TestCase):
         for method in resample_methods:
             result = getattr(series.resample('M'), method)()
             assert_series_equal(result, expected)
+
+    def test_resample_incompat_freq(self):
+
+        with self.assertRaises(IncompatibleFrequency):
+            pd.Series(range(3), index=pd.period_range(
+                start='2000', periods=3, freq='M')).resample('W').mean()
 
     def test_with_local_timezone_pytz(self):
         # GH5430
@@ -2465,7 +2492,6 @@ class TestTimedeltaIndex(Base, tm.TestCase):
         return Series(np.arange(len(i)), index=i, name='tdi')
 
     def test_asfreq_bug(self):
-
         import datetime as dt
         df = DataFrame(data=[1, 3],
                        index=[dt.timedelta(), dt.timedelta(minutes=3)])
@@ -2478,7 +2504,6 @@ class TestTimedeltaIndex(Base, tm.TestCase):
 
 
 class TestResamplerGrouper(tm.TestCase):
-
     def setUp(self):
         self.frame = DataFrame({'A': [1] * 20 + [2] * 12 + [3] * 8,
                                 'B': np.arange(40)},
@@ -2614,11 +2639,13 @@ class TestResamplerGrouper(tm.TestCase):
 
         def f(x):
             return x.resample('2s').sum()
+
         result = r.apply(f)
         assert_frame_equal(result, expected)
 
         def f(x):
             return x.resample('2s').apply(lambda y: y.sum())
+
         result = g.apply(f)
         assert_frame_equal(result, expected)
 
