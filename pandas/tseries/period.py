@@ -41,11 +41,13 @@ def _field_accessor(name, alias, docstring=None):
 
 
 def _get_ordinals(data, freq):
-    f = lambda x: Period(x, freq=freq).ordinal
-    if isinstance(data[0], Period):
+    if len(data) == 0:
+        return np.array([], dtype='int64')
+    elif isinstance(data[0], Period):
         return period.extract_ordinals(data, freq)
-    else:
-        return lib.map_infer(data, f)
+    if com.is_float_dtype(data):
+        raise ValueError("PeriodIndex can't be constructed from floats")
+    return lib.map_infer(data, lambda x: Period(x, freq=freq).ordinal)
 
 
 def dt64arr_to_periodarr(data, freq, tz):
@@ -188,9 +190,43 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
             else:
                 data, freq = cls._generate_range(start, end, periods,
                                                  freq, kwargs)
-        else:
-            ordinal, freq = cls._from_arraylike(data, freq, tz)
-            data = np.array(ordinal, dtype=np.int64, copy=False)
+            return cls._simple_new(data, name=name, freq=freq)
+
+        if isinstance(data, PeriodIndex):
+            if freq is None or freq == data.freq:
+                freq = data.freq
+                data = data.values
+            else:
+                base1, _ = _gfc(data.freq)
+                base2, _ = _gfc(freq)
+                data = period.period_asfreq_arr(
+                    data.values, base1, base2, 1)
+            return cls._simple_new(data, name=name, freq=freq)
+
+        if not isinstance(data, (np.ndarray, PeriodIndex,
+                                 DatetimeIndex, Int64Index)):
+            if lib.isscalar(data):
+                raise ValueError('PeriodIndex() must be called with a '
+                                 'collection of some kind, %r was passed'
+                                 % data)
+
+            # other iterable of some kind
+            if not isinstance(data, (list, tuple)):
+                data = list(data)
+
+            data = np.array(data, copy=False)
+
+        if freq is None and len(data) > 0:
+            freq = getattr(data[0], 'freq', None)
+        if freq is None:
+            raise ValueError('freq not specified and cannot be '
+                             'inferred from first element')
+
+        if np.issubdtype(data.dtype, np.datetime64):
+            data = dt64arr_to_periodarr(data, freq, tz)
+            return cls._simple_new(data, name=name, freq=freq)
+
+        data = _get_ordinals(data, freq)
 
         return cls._simple_new(data, name=name, freq=freq)
 
@@ -211,95 +247,22 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
         return subarr, freq
 
     @classmethod
-    def _from_arraylike(cls, data, freq, tz):
-        if not isinstance(data, (np.ndarray, PeriodIndex,
-                                 DatetimeIndex, Int64Index)):
-            if lib.isscalar(data) or isinstance(data, Period):
-                raise ValueError('PeriodIndex() must be called with a '
-                                 'collection of some kind, %s was passed'
-                                 % repr(data))
+    def _simple_new(cls, data, name=None, freq=None, **kwargs):
+        """ PeriodIndex from array-like of either ints or Periods """
 
-            # other iterable of some kind
-            if not isinstance(data, (list, tuple)):
-                data = list(data)
+        if not com.is_integer_dtype(data):
+            return PeriodIndex(data, name=name, freq=freq, **kwargs)
 
-            try:
-                data = com._ensure_int64(data)
-                if freq is None:
-                    raise ValueError('freq not specified')
-                data = np.array([Period(x, freq=freq).ordinal for x in data],
-                                dtype=np.int64)
-            except (TypeError, ValueError):
-                data = com._ensure_object(data)
-
-                if freq is None and len(data) > 0:
-                    freq = getattr(data[0], 'freq', None)
-
-                if freq is None:
-                    raise ValueError('freq not specified and cannot be '
-                                     'inferred from first element')
-
-                data = _get_ordinals(data, freq)
-        else:
-            if isinstance(data, PeriodIndex):
-                if freq is None or freq == data.freq:
-                    freq = data.freq
-                    data = data.values
-                else:
-                    base1, _ = _gfc(data.freq)
-                    base2, _ = _gfc(freq)
-                    data = period.period_asfreq_arr(data.values,
-                                                    base1, base2, 1)
-            else:
-                if freq is None and len(data) > 0:
-                    freq = getattr(data[0], 'freq', None)
-
-                if freq is None:
-                    raise ValueError('freq not specified and cannot be '
-                                     'inferred from first element')
-
-                if data.dtype != np.int64:
-                    if np.issubdtype(data.dtype, np.datetime64):
-                        data = dt64arr_to_periodarr(data, freq, tz)
-                    else:
-                        try:
-                            data = com._ensure_int64(data)
-                        except (TypeError, ValueError):
-                            data = com._ensure_object(data)
-                            data = _get_ordinals(data, freq)
-
-        return data, freq
-
-    @classmethod
-    def _simple_new(cls, values, name=None, freq=None, **kwargs):
-
-        if not com.is_integer_dtype(values):
-            values = np.array(values, copy=False)
-            if (len(values) > 0 and com.is_float_dtype(values)):
-                raise TypeError("PeriodIndex can't take floats")
-            else:
-                return PeriodIndex(values, name=name, freq=freq, **kwargs)
-
-        values = np.array(values, dtype='int64', copy=False)
+        data = np.array(data, dtype='int64', copy=False)
 
         result = object.__new__(cls)
-        result._data = values
+        result._data = data
         result.name = name
         if freq is None:
             raise ValueError('freq is not specified')
         result.freq = Period._maybe_convert_freq(freq)
         result._reset_identity()
         return result
-
-    def _shallow_copy_with_infer(self, values=None, **kwargs):
-        """ we always want to return a PeriodIndex """
-        return self._shallow_copy(values=values, **kwargs)
-
-    def _shallow_copy(self, values=None, **kwargs):
-        if kwargs.get('freq') is None:
-            # freq must be provided
-            kwargs['freq'] = self.freq
-        return super(PeriodIndex, self)._shallow_copy(values=values, **kwargs)
 
     def _coerce_scalar_to_index(self, item):
         """
@@ -348,7 +311,7 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
 
         if com.is_bool_dtype(result):
             return result
-        return PeriodIndex(result, freq=self.freq, name=self.name)
+        return self._shallow_copy(result)
 
     @property
     def _box_func(self):
@@ -646,7 +609,7 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
         values = self.values + n * self.freq.n
         if self.hasnans:
             values[self._isnan] = tslib.iNaT
-        return PeriodIndex(data=values, name=self.name, freq=self.freq)
+        return self._shallow_copy(values)
 
     @cache_readonly
     def dtype_str(self):
@@ -851,7 +814,7 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
 
     def _apply_meta(self, rawarr):
         if not isinstance(rawarr, PeriodIndex):
-            rawarr = PeriodIndex(rawarr, freq=self.freq)
+            rawarr = self._shallow_copy(rawarr)
         return rawarr
 
     def __getitem__(self, key):
@@ -869,9 +832,9 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                 # values = np.asarray(list(values), dtype=object)
                 # return values.reshape(result.shape)
 
-                return PeriodIndex(result, name=self.name, freq=self.freq)
+                return self._shallow_copy(result)
 
-            return PeriodIndex(result, name=self.name, freq=self.freq)
+            return self._shallow_copy(result)
 
     def _format_native_types(self, na_rep=u('NaT'), date_format=None,
                              **kwargs):
@@ -921,7 +884,7 @@ class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                 to_concat = [x.asobject.values for x in to_concat]
             else:
                 cat_values = np.concatenate([x.values for x in to_concat])
-                return PeriodIndex(cat_values, freq=self.freq, name=name)
+                return self._shallow_copy(cat_values)
 
         to_concat = [x.values if isinstance(x, Index) else x
                      for x in to_concat]
@@ -1143,3 +1106,4 @@ def period_range(start=None, end=None, periods=None, freq='D', name=None):
     """
     return PeriodIndex(start=start, end=end, periods=periods,
                        freq=freq, name=name)
+

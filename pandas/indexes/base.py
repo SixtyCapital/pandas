@@ -67,6 +67,8 @@ def _new_Index(cls, d):
     """ This is called upon unpickling, rather than the default which doesn't
     have arguments and breaks __new__
     """
+    if issubclass(cls, ABCPeriodIndex):
+        return cls._simple_new(**d)
     return cls.__new__(cls, **d)
 
 
@@ -371,7 +373,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
         attributes['copy'] = False
         if self._infer_as_myclass:
             try:
-                return self._constructor(values, **attributes)
+                return self._shallow_copy(values, **attributes)
             except (TypeError, ValueError):
                 pass
         return Index(values, **attributes)
@@ -1944,9 +1946,9 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
                               union(other.difference(self))))
         attribs = self._get_attributes_dict()
         attribs['name'] = result_name
-        if 'freq' in attribs:
-            attribs['freq'] = None
-        return self._shallow_copy_with_infer(the_diff, **attribs)
+        # use constructor rather than _shallow_copy, because we have objects
+        # rather than .values
+        return self._constructor(the_diff, **attribs)
 
     sym_diff = deprecate('sym_diff', symmetric_difference)
 
@@ -2419,10 +2421,10 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
             missing = com._ensure_platform_int(missing)
             missing_labels = target.take(missing)
             missing_indexer = _ensure_int64(l[~check])
-            cur_labels = self.take(indexer[check])._values
+            cur_labels = self.take(indexer[check])
             cur_indexer = _ensure_int64(l[check])
 
-            new_labels = np.empty(tuple([len(indexer)]), dtype=object)
+            new_labels = np.empty(tuple([len(indexer)]), dtype=target.dtype)
             new_labels[cur_indexer] = cur_labels
             new_labels[missing_indexer] = missing_labels
 
@@ -2446,7 +2448,7 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
                 new_indexer = np.arange(len(self.take(indexer)))
                 new_indexer[~check] = -1
 
-        new_index = self._shallow_copy_with_infer(new_labels, freq=None)
+        new_index = self._shallow_copy_with_infer(new_labels)
         return new_index, indexer, new_indexer
 
     def join(self, other, how='left', level=None, return_indexers=False):

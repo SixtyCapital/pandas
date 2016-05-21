@@ -598,6 +598,12 @@ class DatetimeIndex(DatelikeOps, TimelikeOps, DatetimeIndexOpsMixin,
         result._reset_identity()
         return result
 
+    def _shallow_copy_with_infer(self, values=None, **kwargs):
+        # re-infer freq as it may have changed (and always possible to infer
+        # from values for DatetimeIndex)
+        kwargs['freq'] = None
+        return super(DatetimeIndex, self)._shallow_copy_with_infer(values, **kwargs)
+
     @property
     def tzinfo(self):
         """

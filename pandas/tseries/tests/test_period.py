@@ -1769,11 +1769,14 @@ class TestPeriodIndex(tm.TestCase):
         result = idx._simple_new(idx, name='p', freq='M')
         assert_index_equal(result, idx)
 
-    def test_constructor_simple_new_floats(self):
+    def test_constructor_floats(self):
         # GH13079
-        for floats in [[1.1], np.array([1.1])]:
-            with self.assertRaises(TypeError):
+        for floats in [[1.1, 2.1], np.array([1.1, 2.1])]:
+            with self.assertRaises(ValueError):
                 pd.PeriodIndex._simple_new(floats, freq='M')
+
+            with self.assertRaises(ValueError):
+                pd.PeriodIndex(floats, freq='M')
 
     def test_shallow_copy_empty(self):
 
@@ -3279,7 +3282,7 @@ class TestPeriodIndex(tm.TestCase):
     def test_recreate_from_data(self):
         for o in ['M', 'Q', 'A', 'D', 'B', 'T', 'S', 'L', 'U', 'N', 'H']:
             org = PeriodIndex(start='2001/04/01', freq=o, periods=1)
-            idx = PeriodIndex(org.values, freq=o)
+            idx = PeriodIndex(org, freq=o)
             tm.assert_index_equal(idx, org)
 
     def test_combine_first(self):

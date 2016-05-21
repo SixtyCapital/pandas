@@ -867,7 +867,7 @@ class TestPeriodIndex(DatetimeLike, tm.TestCase):
         # GH10183
         idx = pd.period_range('2000-01-01', periods=3, freq='D')
         res = idx.repeat(3)
-        exp = PeriodIndex(idx.values.repeat(3), freq='D')
+        exp = PeriodIndex._simple_new(idx.values.repeat(3), freq='D')
         self.assert_index_equal(res, exp)
         self.assertEqual(res.freqstr, 'D')
 

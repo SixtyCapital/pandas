@@ -304,17 +304,18 @@ def _value_counts_arraylike(values, dropna=True):
 
     orig = values
 
+    if is_period:
+        from pandas.tseries.period import PeriodIndex
+        index = PeriodIndex(values)
+        freq = index.freq
+        values = index.values
+
     from pandas.core.series import Series
     values = Series(values).values
     dtype = values.dtype
 
     if com.is_datetime_or_timedelta_dtype(dtype) or is_period:
         from pandas.tseries.index import DatetimeIndex
-        from pandas.tseries.period import PeriodIndex
-
-        if is_period:
-            values = PeriodIndex(values)
-            freq = values.freq
 
         values = values.view(np.int64)
         keys, counts = htable.value_count_scalar64(values, dropna)
@@ -333,7 +334,7 @@ def _value_counts_arraylike(values, dropna=True):
             else:
                 tz = orig.dt.tz
             keys = DatetimeIndex._simple_new(keys, tz=tz)
-        if is_period:
+        elif is_period:
             keys = PeriodIndex._simple_new(keys, freq=freq)
 
     elif com.is_integer_dtype(dtype):
