@@ -64,7 +64,10 @@ _Identity = object
 
 
 def _new_Index(cls, d):
-    """ This is called upon unpickling, rather than the default which doesn't
+    """
+    For back-compat with old pickles only
+
+    This is called upon unpickling, rather than the default which doesn't
     have arguments and breaks __new__
     """
     if issubclass(cls, ABCPeriodIndex):
@@ -1226,21 +1229,18 @@ class Index(IndexOpsMixin, StringAccessorMixin, PandasObject):
     def __iter__(self):
         return iter(self.values)
 
-    def __reduce__(self):
-        d = dict(data=self._data)
-        d.update(self._get_attributes_dict())
-        return _new_Index, (self.__class__, d), None
+    def __getstate__(self):
+        return dict(_data=self._data, **self._get_attributes_dict())
 
     def __setstate__(self, state):
         """Necessary for making this object picklable"""
 
         if isinstance(state, dict):
-            self._data = state.pop('data')
-            for k, v in compat.iteritems(state):
-                setattr(self, k, v)
+            # do what python does
+            self.__dict__ = state
 
         elif isinstance(state, tuple):
-
+            # back compat
             if len(state) == 2:
                 nd_state, own_state = state
                 data = np.empty(nd_state[1], dtype=nd_state[2])
